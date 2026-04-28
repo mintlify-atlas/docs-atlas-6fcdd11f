@@ -1,0 +1,83 @@
+{
+  "projectType": "general",
+  "projectName": "Aster Bot",
+  "projectDescription": "An automated perpetual futures trading bot for AsterDEX, featuring dual strategies (Watermellon and Peach Hybrid), advanced risk controls, and production-grade logging.",
+  "theme": "luma",
+  "primaryColor": "#f3d1a8",
+  "lightColor": "#837460",
+  "darkColor": "#151414",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "prerequisites"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/environment-variables",
+              "configuration/risk-management",
+              "configuration/strategies"
+            ]
+          },
+          {
+            "group": "Strategies",
+            "pages": [
+              "strategies/overview",
+              "strategies/watermellon",
+              "strategies/peach-hybrid"
+            ]
+          },
+          {
+            "group": "Operations",
+            "pages": [
+              "operations/running-the-bot",
+              "operations/deployment",
+              "operations/monitoring",
+              "operations/troubleshooting"
+            ]
+          },
+          {
+            "group": "Reference",
+            "pages": [
+              "reference/logging",
+              "reference/state-persistence",
+              "reference/security",
+              "reference/indicators"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Dual strategy engine: Watermellon (EMA+RSI trend) and Peach Hybrid (V1 trend bias + V2 momentum surge)",
+    "Configurable risk management: position sizing, leverage limits, stop-loss, take-profit, trailing stops",
+    "Dry-run and live execution modes with full audit logging",
+    "Virtual bar builder aggregating WebSocket ticks into synthetic OHLCV bars",
+    "Persistent state across restarts via bot-state.json",
+    "ADX regime filter to block entries in non-trending conditions",
+    "PM2 and systemd deployment support",
+    "Daily CSV/JSON trade logs and signal logs for research and compliance"
+  ],
+  "publicApiSurface": [
+    "WatermellonEngine.update(bar: SyntheticBar): StrategySignal | null",
+    "PeachHybridEngine.update(bar: SyntheticBar): StrategySignal | null",
+    "VirtualBarBuilder — aggregates ticks into synthetic bars",
+    "BotRunner — main orchestrator (EventEmitter: signal, position, log, stop)",
+    "ExecutionAdapter.enterLong / enterShort / closePosition",
+    "loadConfig(overrides?) — env-driven AppConfig loader",
+    "TradeLogger — daily CSV/JSON/signal file writer",
+    "StatePersistence — reads/writes data/bot-state.json",
+    "PositionStateManager — in-memory position tracking",
+    "RestPoller — periodic REST polling against fapi.asterdex.com",
+    "npm run bot — start the trading bot (tsx src/bot/index.ts)"
+  ]
+}

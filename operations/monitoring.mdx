@@ -1,0 +1,83 @@
+---
+title: 'Monitor Aster Bot logs, signals, and trade files'
+description: 'Stream real-time console events with PM2 or journalctl, and interpret daily trade CSV and JSON files written to data/trades/daily/.'
+---
+
+Aster Bot produces three categories of output: real-time console logs, daily trade records, and signal logs. Each serves a different monitoring purpose. Console output tells you what is happening right now; daily trade files give you a structured audit trail; signal logs explain why every entry was taken or skipped.
+
+## Real-time monitoring
+
+<Tabs>
+  <Tab title="Direct (npm)">
+    Start the bot directly and observe events as they stream to your terminal:
+
+    ```bash
+    npm run bot
+    ```
+
+    Every completed virtual bar, evaluated signal, placed order, and state change is logged to stdout in real time.
+  </Tab>
+  <Tab title="PM2">
+    When the bot is running under PM2, tail the merged log stream:
+
+    ```bash
+    pm2 logs watermellon-bot
+    ```
+
+    This streams both stdout (`./logs/pm2-out.log`) and stderr (`./logs/pm2-error.log`). To follow only errors:
+
+    ```bash
+    pm2 logs watermellon-bot --err
+    ```
+  </Tab>
+  <Tab title="systemd">
+    When the bot is running as a systemd service, use `journalctl`:
+
+    ```bash
+    journalctl -u watermellon-bot -f
+    ```
+
+    Add `--since today` to limit output to the current day, or `--since "2 hours ago"` for a rolling window.
+  </Tab>
+</Tabs>
+
+## Daily trade files
+
+All trade and signal output is written to `data/trades/daily/`. Files are rotated daily and named with an ISO date suffix.
+
+| File pattern | Location | Content | Best for |
+|---|---|---|---|
+| `trades-YYYY-MM-DD.csv` | `data/trades/daily/` | One row per trade: entry/exit times, prices, P&L, P&L%, leverage | Spreadsheet analysis, quick P&L review |
+| `trades-YYYY-MM-DD.json` | `data/trades/daily/` | Full structured trade records with indicator snapshots | Programmatic analysis, back-testing scripts |
+| `signals-YYYY-MM-DD.json` | `data/trades/daily/` | Every signal evaluated — both taken and skipped — with indicator values and skip reasons | Understanding bot decision-making, parameter tuning |
+
+### Reading trade records
+
+Each entry in the trade files includes:
+
+- **Entry and exit timestamps** — exact times the position was opened and closed
+- **Entry and exit prices** — fill prices recorded by the execution adapter
+- **P&L and P&L%** — realized profit or loss in USDT and as a percentage of position size
+- **Indicator snapshots** — EMA values, RSI, ADX, ATR at signal time
+- **Signal reason** — which strategy condition triggered the entry
+- **Leverage** — the leverage multiplier applied to this trade
+
+### Reading signal logs
+
+The `signals-YYYY-MM-DD.json` file contains every signal the strategy considered, including those that were not executed. Each skipped signal includes a `reason` field explaining why:
+
+- `ADX_BELOW_THRESHOLD` — `REQUIRE_TRENDING_MARKET=true` and ADX was below `ADX_THRESHOLD`
+- `MAX_FLIPS_REACHED` — `MAX_FLIPS_PER_HOUR` limit was hit for the current hour
+- `POSITION_ALREADY_OPEN` — a position in the same direction already exists
+- `MIN_BARS_BETWEEN` — insufficient bars elapsed since the last entry (Peach Hybrid V1)
+- `MIN_MOVE_PCT` — price move since last signal was below the configured minimum
+
+<Tip>
+  Review `signals-YYYY-MM-DD.json` every day. It is the most direct window into the bot's decision-making. If the bot is taking fewer trades than expected, the `reason` fields will identify whether the cause is a regime filter, a flip limit, or a strategy threshold that needs tuning.
+</Tip>
+
+## State file
+
+Aster Bot persists its position and session state to `data/bot-state.json`. This file is read on startup so the bot can resume coherently after a restart without losing track of open positions or session counters.
+
+If the state file is older than approximately one hour at startup time, the bot may discard it as stale rather than acting on potentially outdated position data. Delete `data/bot-state.json` manually only when you have confirmed there are no open positions on the exchange (see [Troubleshooting](/operations/troubleshooting) for the reconciliation procedure).

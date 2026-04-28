@@ -1,0 +1,72 @@
+---
+title: 'Run Aster Bot: dry-run and live mode guide'
+description: 'Start Aster Bot with npm run bot, understand the difference between dry-run simulation and live order execution, and follow the full startup sequence.'
+---
+
+Aster Bot operates in two modes controlled by the `MODE` environment variable. In **dry-run** mode the bot simulates every decision without touching the exchange — ideal for validating configuration and strategy behavior before committing real capital. In **live** mode the bot places real perpetual futures orders on AsterDEX using your credentials; losses are real and leverage amplifies them.
+
+## Choosing a mode
+
+<Tabs>
+  <Tab title="Dry-run mode">
+    Set `MODE=dry-run` in your `.env.local` (the default in `env.example`) and start the bot:
+
+    ```bash
+    npm run bot
+    ```
+
+    No orders are sent to AsterDEX. The execution adapter simulates fills, records every signal and trade to `data/trades/daily/`, and streams all events to the console. Use this mode until your configuration is stable and you understand the signal output.
+  </Tab>
+  <Tab title="Live mode">
+    <Warning>
+      Live mode places real orders and can lose real money. Review every risk variable before proceeding.
+    </Warning>
+
+    1. Set `MODE=live` in `.env.local`.
+    2. Verify every risk variable — `MAX_POSITION_USDT`, `MAX_LEVERAGE`, `EMERGENCY_STOP_LOSS_PCT`, and `MAX_FLIPS_PER_HOUR` at minimum.
+    3. Confirm your AsterDEX account has sufficient margin and that your API key is restricted to your server's IP address.
+    4. Start the bot:
+
+    ```bash
+    npm run bot
+    ```
+
+    The process prints a short warning before live operation begins.
+  </Tab>
+</Tabs>
+
+## npm scripts
+
+| Script | Command | Purpose |
+|---|---|---|
+| `bot` | `tsx src/bot/index.ts` | Start the trading bot |
+| `build` | `next build` | Compile the project |
+| `lint` | `eslint` | Run the linter |
+
+## Startup sequence
+
+When `npm run bot` is executed, the bot runs through the following steps before the first tick is processed:
+
+<Steps>
+  <Step title="Load and validate configuration">
+    The `.env.local` file is read and every variable is parsed through a Zod schema. Any invalid or missing field causes an immediate exit with a descriptive error message indicating which field failed validation. Common example: `MAX_LEVERAGE` must be one of `5`, `10`, `15`, or `50`.
+  </Step>
+  <Step title="Startup price guard">
+    The bot calls `prices()` from the `web3.prc` package and reads the `responsive` field as the current ASTER reference price in USDT. If that value is **strictly below `0.871` USDT**, the process exits immediately without starting the strategy or opening a WebSocket connection.
+
+    For local development only, set `SKIP_MIN_SPOT_CHECK=true` to bypass this guard. Do not disable it in production.
+  </Step>
+  <Step title="Initialize bot runner">
+    The strategy engine (Watermellon or Peach Hybrid depending on `STRATEGY_TYPE`), position state manager, and execution adapter (dry-run or live) are constructed. Existing state is loaded from `data/bot-state.json` if the file is present and not stale.
+  </Step>
+  <Step title="Connect WebSocket">
+    A WebSocket connection is established to `ASTER_WS_URL`. The bot subscribes to the market data stream for the configured `PAIR_SYMBOL`.
+  </Step>
+  <Step title="Begin virtual bar building">
+    On the first tick received from the WebSocket, the virtual bar builder starts aggregating raw ticks into bars of `VIRTUAL_TIMEFRAME_MS` duration. Indicators are computed on each completed bar and signals are evaluated against the strategy rules.
+  </Step>
+</Steps>
+
+<Warning>
+  Before switching from `MODE=dry-run` to `MODE=live`, double-check **all** risk variables in your `.env.local`: `MAX_POSITION_USDT`, `MAX_LEVERAGE`, `STOP_LOSS_PCT`, `EMERGENCY_STOP_LOSS_PCT`, `MAX_FLIPS_PER_HOUR`, and `REQUIRE_TRENDING_MARKET`. A misconfigured variable in live mode can result in outsized losses.
+</Warning>

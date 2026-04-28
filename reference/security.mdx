@@ -1,0 +1,103 @@
+---
+title: "Credential security and KeyManager redaction"
+description: "How to store API keys safely, how KeyManager redacts secrets from logs, and recommended AsterDEX API key restrictions for production use."
+---
+
+Aster Bot handles your AsterDEX API key, API secret, and EVM private key. These are loaded from environment variables at startup and centrally managed by `KeyManager`, which ensures they are never logged in plain text. No credential value is ever written to a log file, console output, or state file.
+
+## Credential storage
+
+Store all credentials in `.env.local`. This file is excluded from version control by the project's `.gitignore`.
+
+```bash
+# .env.local
+ASTER_API_KEY=your_api_key
+ASTER_API_SECRET=your_api_secret
+TRADING_WALLET_PRIVATE_KEY=your_64_hex_char_private_key
+```
+
+Rules to follow:
+
+- **Never commit `.env.local`** — verify your `.gitignore` includes it before pushing.
+- **Never use `.env`** — that file may be committed by accident.
+- **Do not use `ASTER_PRIVATE_KEY`** — this is a legacy variable name that is not read by the bot. Always use `TRADING_WALLET_PRIVATE_KEY`.
+
+## KeyManager redaction
+
+`KeyManager` is a static utility class in `src/lib/security/keyManager.ts`. All log output that involves credentials must go through it.
+
+**`KeyManager.redactKey(key: string): string`**
+
+Keeps the first 4 and last 4 characters of a key and replaces the middle with `***REDACTED***`. Keys shorter than 8 characters are fully replaced.
+
+```typescript
+KeyManager.redactKey("abcd1234efgh5678")
+// → "abcd***REDACTED***5678"
+```
+
+**`KeyManager.redactCredentials(credentials): Record<string, unknown>`**
+
+Accepts an object with optional `apiKey`, `apiSecret`, and `privateKey` fields. Returns a copy with:
+
+- `apiKey` → first 4 + `***REDACTED***` + last 4 characters
+- `apiSecret` → first 4 + `***REDACTED***` + last 4 characters
+- `privateKey` → `***REDACTED***` in full (no prefix/suffix revealed)
+
+**`KeyManager.safeLog(message: string, data?: Record<string, unknown>): void`**
+
+A drop-in replacement for `console.log` that inspects all string values in `data`. Any key whose name contains `"key"` or `"secret"` (case-insensitive) has its value redacted before printing.
+
+<Warning>
+  Never pass raw credential values directly to `console.log`, logger calls, or error objects. Always pass them through `KeyManager.redactKey()` or `KeyManager.safeLog()`. Unredacted keys in logs are a common source of accidental credential exposure.
+</Warning>
+
+## TRADING_WALLET_PRIVATE_KEY requirements
+
+<ResponseField name="TRADING_WALLET_PRIVATE_KEY" type="string" required>
+  The raw EVM private key of the trading wallet. Must be exactly 64 hexadecimal characters, with an optional `0x` prefix. The bot validates the format at startup using `isValidEvmPrivateKeyFormat()`. An invalid or missing value will prevent the bot from starting.
+</ResponseField>
+
+```bash
+# Valid formats
+TRADING_WALLET_PRIVATE_KEY=abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890
+TRADING_WALLET_PRIVATE_KEY=0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890
+```
+
+<Warning>
+  If `TRADING_WALLET_PRIVATE_KEY` is compromised, transfer all assets from that wallet immediately before revoking or rotating the key. A leaked private key grants full, irrevocable control of the wallet — there is no on-chain mechanism to restrict it.
+</Warning>
+
+## Exchange API key best practices
+
+<ResponseField name="IP allowlist" type="string">
+  Restrict your AsterDEX API key to the specific IP address of your VPS or server. This prevents the key from being used if it is leaked.
+</ResponseField>
+
+<ResponseField name="Minimum permissions" type="string">
+  Grant only the permissions required for perpetual futures trading. Do not enable withdrawal permissions.
+</ResponseField>
+
+<ResponseField name="Key rotation" type="string">
+  Rotate API keys periodically — at minimum when you rotate infrastructure or suspect a leak. Update `.env.local` and restart the bot.
+</ResponseField>
+
+<ResponseField name="No sharing" type="string">
+  Never share `TRADING_WALLET_PRIVATE_KEY` with anyone. Unlike API keys, it cannot be scoped or revoked at the exchange level.
+</ResponseField>
+
+## Credential flow at startup
+
+When the bot starts, credentials are loaded once from environment variables into the `Credentials` type:
+
+```typescript
+export type Credentials = {
+  rpcUrl: string;
+  wsUrl: string;
+  apiKey: string;
+  apiSecret: string;
+  privateKey: string;
+  pairSymbol: string;
+};
+```
+
+After validation, the raw `privateKey` value is only ever passed to the wallet signing layer. All other code that needs to reference credentials for logging purposes must use `KeyManager.redactCredentials()`.

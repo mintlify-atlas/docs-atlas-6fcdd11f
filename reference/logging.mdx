@@ -1,0 +1,187 @@
+---
+title: "Trade logging: CSV, JSON, and signal audit files"
+description: "Daily CSV, JSON, and signal log files produced by TradeLogger, their fields, and how to use them for trade auditing and signal analysis."
+---
+
+Aster Bot writes daily log files to `data/trades/daily/`. These are the primary audit trail for every trade and signal decision. A new set of files is created each calendar day, named by UTC date.
+
+## File types
+
+| File pattern | Location | Content |
+|---|---|---|
+| `trades-YYYY-MM-DD.csv` | `data/trades/daily/` | Tabular trade records for spreadsheet analysis |
+| `trades-YYYY-MM-DD.json` | `data/trades/daily/` | Structured JSON trade records (ENTRY and EXIT events) |
+| `signals-YYYY-MM-DD.json` | `data/trades/daily/` | All evaluated signals, both taken and skipped |
+
+The CSV and JSON trade files share the same records. The CSV is more convenient for quick inspection in a spreadsheet; the JSON preserves full indicator context per event.
+
+## Trade record fields
+
+Each entry in `trades-YYYY-MM-DD.json` is either an ENTRY or EXIT event. Both carry a `timestamp`, `event`, `side`, `size`, `leverage`, `bar` (OHLCV snapshot), `indicators`, and `marketConditions`. EXIT events additionally carry `exitPrice`, `pnl`, `pnlPercent`, `duration`, and `exitReason`.
+
+The following fields appear on trade records in the JSON file:
+
+<ResponseField name="timestamp" type="string">
+  ISO 8601 timestamp of when the event was logged (e.g. `"2025-04-15T09:32:01.123Z"`).
+</ResponseField>
+
+<ResponseField name="event" type='"ENTRY" | "EXIT"'>
+  Whether this record represents a position open or close.
+</ResponseField>
+
+<ResponseField name="side" type='"long" | "short"'>
+  Direction of the trade.
+</ResponseField>
+
+<ResponseField name="entryPrice" type="number">
+  Price at which the position was opened.
+</ResponseField>
+
+<ResponseField name="exitPrice" type="number">
+  Price at which the position was closed. Present on EXIT events only.
+</ResponseField>
+
+<ResponseField name="size" type="number">
+  Position size in base currency units.
+</ResponseField>
+
+<ResponseField name="leverage" type="number">
+  Leverage applied to the position.
+</ResponseField>
+
+<ResponseField name="pnl" type="number">
+  Realized profit or loss in quote currency. Present on EXIT events only.
+</ResponseField>
+
+<ResponseField name="pnlPercent" type="number">
+  Realized PnL as a percentage of collateral. Present on EXIT events only.
+</ResponseField>
+
+<ResponseField name="duration" type="number">
+  Time the position was held, in milliseconds. Present on EXIT events only.
+</ResponseField>
+
+<ResponseField name="exitReason" type="string">
+  Human-readable reason the position was closed (e.g. `"stop-loss"`, `"opposite-signal"`). Present on EXIT events only.
+</ResponseField>
+
+<ResponseField name="signalReason" type="string">
+  The strategy signal reason that triggered entry (e.g. `"v1-long"`, `"v2-short"`). Present on ENTRY events only.
+</ResponseField>
+
+<ResponseField name="balance" type="number">
+  Account balance at the time of the event.
+</ResponseField>
+
+<ResponseField name="stopLossPrice" type="number">
+  Calculated stop-loss price. Present on ENTRY events when a stop is set.
+</ResponseField>
+
+<ResponseField name="takeProfitPrice" type="number">
+  Calculated take-profit price. Present on ENTRY events when a target is set.
+</ResponseField>
+
+<ResponseField name="riskRewardRatio" type="number">
+  Ratio of potential reward to risk at entry. Present on ENTRY events.
+</ResponseField>
+
+<ResponseField name="bar" type="object">
+  The OHLCV bar that triggered the event: `open`, `high`, `low`, `close`, `volume`, and `timestamp` (Unix ms).
+</ResponseField>
+
+<ResponseField name="indicators" type="object">
+  Indicator values at the time of the event. Contains `v1` and `v2` sub-objects (each with `emaFast`, `emaMid`, `emaSlow`, `rsi`), plus top-level `adx` and `atr`.
+</ResponseField>
+
+<ResponseField name="marketConditions" type="object">
+  Includes `adx`, `atr`, and (on ENTRY events) `adxReady` and `marketRegime` (`"trending"` | `"ranging"` | `"warming up"`).
+</ResponseField>
+
+<ResponseField name="riskParams" type="object">
+  Risk configuration at entry time: `maxPositionSize`, `maxLeverage`, `stopLossPct`, `takeProfitPct`. Present on ENTRY events only.
+</ResponseField>
+
+## CSV columns
+
+The CSV file has the following columns in order:
+
+```
+Timestamp, Event, Side, Entry Price, Exit Price, Size, Leverage,
+PnL, PnL %, Duration (ms), Reason,
+Entry RSI V1, Entry RSI V2, Entry ADX, Entry ATR,
+Exit RSI V1, Exit RSI V2, Exit ADX, Exit ATR,
+Risk/Reward, Bar Close, Volume
+```
+
+ENTRY rows leave exit-related columns blank; EXIT rows leave entry indicator columns blank.
+
+<Note>
+  The **Duration (ms)** column header is the label used in the CSV file, but the actual written value is in **hours** (e.g. `"0.50"` for a 30-minute trade). This is a known quirk of the logger implementation.
+</Note>
+
+## Signal log fields
+
+Every signal evaluated by the strategy engine — whether acted on or skipped — is appended to `signals-YYYY-MM-DD.json`. Entries include:
+
+<ResponseField name="timestamp" type="string">
+  ISO 8601 timestamp of when the signal was evaluated.
+</ResponseField>
+
+<ResponseField name="event" type='"SIGNAL"'>
+  Always `"SIGNAL"` in this file.
+</ResponseField>
+
+<ResponseField name="signalType" type='"long" | "short"'>
+  Direction the signal proposed.
+</ResponseField>
+
+<ResponseField name="signalReason" type="string">
+  Strategy-level reason code: `"v1-long"`, `"v1-short"`, `"v2-long"`, or `"v2-short"` (Peach Hybrid), or `"long-trigger"` / `"short-trigger"` (Watermellon).
+</ResponseField>
+
+<ResponseField name="action" type='"TAKEN" | "SKIPPED"'>
+  Whether the bot entered a trade on this signal.
+</ResponseField>
+
+<ResponseField name="skipReason" type="string">
+  Explanation of why the signal was not acted on. Only present when `action` is `"SKIPPED"`.
+</ResponseField>
+
+<ResponseField name="indicators" type="IndicatorSnapshot">
+  Indicator values at signal time. See type definition below.
+</ResponseField>
+
+<ResponseField name="marketConditions" type="object">
+  Includes `adx`, `adxReady`, and `marketRegime` at the time of evaluation.
+</ResponseField>
+
+<ResponseField name="riskRewardRatio" type="number">
+  Risk/reward ratio assessed at signal time, if available.
+</ResponseField>
+
+The `IndicatorSnapshot` and `TrendSnapshot` types from `src/lib/types.ts` are:
+
+```typescript
+export type IndicatorSnapshot = {
+  emaFast: number;
+  emaMid: number;
+  emaSlow: number;
+  rsi: number;
+  adx?: number | null;
+};
+
+export type TrendSnapshot = {
+  bullStack: boolean;
+  bearStack: boolean;
+  longLook: boolean;
+  shortLook: boolean;
+  longTrig: boolean;
+  shortTrig: boolean;
+};
+```
+
+`TrendSnapshot` is embedded in `StrategySignal` under the `trend` key and reflects the full boolean condition stack at signal time.
+
+<Tip>
+  Use `signals-YYYY-MM-DD.json` to understand why the bot skipped signals — look for entries where `action` is `"SKIPPED"` and read the `skipReason` field. This is the most reliable way to diagnose risk-layer rejections or ADX gate blocks without modifying any code.
+</Tip>

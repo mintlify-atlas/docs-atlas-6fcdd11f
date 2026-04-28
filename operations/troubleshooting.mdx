@@ -1,0 +1,136 @@
+---
+title: 'Troubleshoot startup, no-trades, and reconciliation'
+description: 'Diagnose and fix startup failures, no-trade scenarios, live mode execution errors, and position reconciliation mismatches in Aster Bot.'
+---
+
+Most issues fall into three categories: startup failures caused by configuration or key problems, no-trade scenarios caused by strategy filters or market conditions, and execution or reconciliation errors caused by state divergence between the bot and the exchange.
+
+<Note>
+  Before investigating anything else, open today's `signals-YYYY-MM-DD.json` file in `data/trades/daily/`. It contains the most diagnostic information available — every signal the bot considered, whether it was taken or skipped, and the exact reason for each skip.
+</Note>
+
+<AccordionGroup>
+  <Accordion title="Bot won't start — TRADING_WALLET_PRIVATE_KEY error">
+    The bot requires `TRADING_WALLET_PRIVATE_KEY` to be a 64-character hex string, optionally prefixed with `0x`. It does **not** read `ASTER_PRIVATE_KEY` — that variable name is legacy and is ignored.
+
+    Verify the key length with:
+
+    ```bash
+    echo $TRADING_WALLET_PRIVATE_KEY | tr -d '0x' | wc -c
+    ```
+
+    The output should be `65` (64 hex characters plus a trailing newline). If it is shorter or longer, re-export your private key from your wallet and update `.env.local`.
+
+    Common mistakes:
+    - Using `ASTER_PRIVATE_KEY` instead of `TRADING_WALLET_PRIVATE_KEY`
+    - Accidentally including a space or newline inside the value in `.env.local`
+    - Using the full JSON keystore object instead of the raw hex private key
+  </Accordion>
+
+  <Accordion title="Bot exits immediately — price check failure">
+    The bot calls `prices()` from the `web3.prc` package during startup and checks whether the `responsive` field is at or above `0.871` USDT. If the value is strictly below that threshold, the process exits before connecting to the WebSocket or placing any orders.
+
+    This is an intentional safety guard. If the ASTER price is that low, the bot refuses to trade.
+
+    **For local development and testing only**, bypass the check by setting:
+
+    ```bash
+    SKIP_MIN_SPOT_CHECK=true
+    ```
+
+    Do not set `SKIP_MIN_SPOT_CHECK=true` in a production `.env.local`. The guard exists to protect you.
+
+    If you see this exit in production and the ASTER price is above `0.871`, the issue may be a network failure preventing `web3.prc` from fetching the price. Check outbound connectivity from your server to the `web3.prc` endpoint.
+  </Accordion>
+
+  <Accordion title="Bot starts but places no trades">
+    If the bot is running, consuming ticks, and completing virtual bars but not entering any positions, work through this checklist:
+
+    1. **Check signal skip reasons.** Open `data/trades/daily/signals-YYYY-MM-DD.json` and look at the `reason` field on skipped signals.
+
+    2. **Regime filter active.** The most common cause of zero trades is `REQUIRE_TRENDING_MARKET=true` combined with ADX below `ADX_THRESHOLD` (default `25`). If the market is ranging, no entries are allowed. Either wait for trending conditions or lower `ADX_THRESHOLD` after reviewing its effect in dry-run.
+
+    3. **Flip limit reached.** `MAX_FLIPS_PER_HOUR` caps how many position flips can occur within a rolling hour. If this limit was reached earlier in the session, no new entries will be allowed until the hour resets.
+
+    4. **Insufficient account balance.** Verify that your AsterDEX account has enough USDT margin to open a position of at least `MAX_POSITION_USDT / MAX_LEVERAGE` notional. If the margin is insufficient, order placement will fail.
+
+    5. **Minimum notional not met.** AsterDEX enforces a minimum notional per order. If `MAX_POSITION_USDT` is set very low, the order may be rejected. Check the exchange's minimum order size for ASTERUSDT-PERP.
+  </Accordion>
+
+  <Accordion title="Invalid configuration error on startup">
+    Configuration is validated using a Zod schema immediately after loading `.env.local`. When a value fails validation, the bot exits and prints the field name and the specific error message.
+
+    Read the console output carefully — Zod errors identify the exact variable and the constraint that was violated.
+
+    Common validation failures:
+
+    | Variable | Constraint | Example bad value |
+    |---|---|---|
+    | `MAX_LEVERAGE` | Must be `5`, `10`, `15`, or `50` | `20` |
+    | `MODE` | Must be `dry-run` or `live` | `test` |
+    | `TRADING_WALLET_PRIVATE_KEY` | Must be 64 hex characters | key with wrong length |
+    | `MAX_FLIPS_PER_HOUR` | Must be a non-negative integer | `-1` or a decimal |
+
+    Fix the value in `.env.local`, then restart.
+  </Accordion>
+
+  <Accordion title="Reconciliation errors / position mismatch">
+    A reconciliation error means the bot's internal position state (stored in `data/bot-state.json`) does not match what the exchange reports for your account.
+
+    **Common causes:**
+    - A position was closed manually on AsterDEX while the bot was running
+    - The bot was stopped mid-trade (e.g., server rebooted after an entry but before the exit)
+    - A manual order was placed on the exchange outside the bot
+
+    **How to fix:**
+
+    <Steps>
+      <Step title="Stop the bot">
+        ```bash
+        pm2 stop watermellon-bot
+        # or
+        sudo systemctl stop watermellon-bot
+        ```
+      </Step>
+      <Step title="Reconcile manually">
+        Log in to AsterDEX and close any open ASTERUSDT-PERP positions manually. Confirm the position is fully closed before proceeding.
+      </Step>
+      <Step title="Delete the state file">
+        ```bash
+        rm data/bot-state.json
+        ```
+      </Step>
+      <Step title="Restart the bot">
+        ```bash
+        pm2 start ecosystem.config.js
+        # or
+        sudo systemctl start watermellon-bot
+        ```
+
+        The bot will start fresh with no assumed position.
+      </Step>
+    </Steps>
+  </Accordion>
+
+  <Accordion title="PM2 process keeps restarting">
+    If `pm2 list` shows the `watermellon-bot` process cycling through `online` → `stopped` → `online` repeatedly, the process is crashing on startup or shortly after.
+
+    Inspect the logs first:
+
+    ```bash
+    pm2 logs watermellon-bot --lines 100
+    ```
+
+    Common causes and fixes:
+
+    | Cause | Fix |
+    |---|---|
+    | Invalid environment variable | Check `.env.local` for Zod validation errors in the log output |
+    | Missing or malformed `TRADING_WALLET_PRIVATE_KEY` | See the key error accordion above |
+    | Network unreachable | Verify outbound connectivity to `fapi.asterdex.com` and `fstream.asterdex.com` from the server |
+    | Memory limit hit | Process RSS exceeded `500M`; consider increasing `max_memory_restart` in `ecosystem.config.js` or investigate a memory leak |
+    | `logs/` directory missing | Create it manually: `mkdir -p logs` in the bot root |
+
+    If the crash happens after the bot has been running for a while (rather than immediately on start), check whether `max_memory_restart` is being triggered: `pm2 show watermellon-bot` will display the restart reason.
+  </Accordion>
+</AccordionGroup>

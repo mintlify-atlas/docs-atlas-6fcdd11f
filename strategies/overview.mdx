@@ -1,0 +1,113 @@
+---
+title: "Strategy overview: signal engines and virtual bars"
+description: "How Aster Bot's two signal engines work, how virtual bars are built from live WebSocket ticks, and how to choose between Watermellon and Peach Hybrid."
+---
+
+Aster Bot implements two independent signal engines — Watermellon and Peach Hybrid. Both consume virtual OHLCV bars built from live WebSocket tick data and return a `StrategySignal` of type `"long"`, `"short"`, or `null`. Neither engine holds order state; signal routing, position sizing, and execution are handled by the risk layer downstream.
+
+## Virtual bars
+
+Raw price ticks arrive over the AsterDEX WebSocket as `aggTrade` messages. The `VirtualBarBuilder` class accumulates these ticks into synthetic OHLCV bars at a fixed `VIRTUAL_TIMEFRAME_MS` interval (default 30 000 ms). Each tick extends the current bar's high, low, close, and volume fields until the interval elapses, at which point the bar is closed and a new one begins.
+
+The resulting `SyntheticBar` type carries all fields a strategy engine needs:
+
+```typescript
+export type SyntheticBar = {
+  startTime: number;
+  endTime: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+};
+```
+
+<Note>
+  `VIRTUAL_TIMEFRAME_MS` controls the bar interval for both engines. A shorter
+  interval produces more bars and more signals, but also more noise. Align this
+  value with the timeframe you use when researching charts — mismatches between
+  your analysis timeframe and the bot's bar interval are a common source of
+  unexpected behaviour.
+</Note>
+
+## Signal flow
+
+<Steps>
+  <Step title="Tick arrives">
+    The `AsterTickStream` WebSocket client emits a `Tick` event containing
+    `price`, `size`, and `timestamp`.
+  </Step>
+  <Step title="Bar update">
+    `VirtualBarBuilder.pushTick()` updates the in-progress bar. When the
+    timeframe elapses it returns a closed `SyntheticBar` alongside the new
+    current bar.
+  </Step>
+  <Step title="Engine update">
+    The closed bar is passed to `engine.update(bar)`. The engine updates its
+    internal indicators and evaluates entry conditions, returning a
+    `StrategySignal` or `null`.
+  </Step>
+  <Step title="Risk layer">
+    A non-null signal is forwarded to the risk layer, which applies position
+    limits, leverage caps, flip-rate budgets, and optional stop-loss / take-profit
+    rules before issuing a `TradeInstruction`.
+  </Step>
+  <Step title="Execution">
+    The `ExecutionAdapter` translates the `TradeInstruction` into an on-chain
+    order on AsterDEX (`enterLong`, `enterShort`, or `closePosition`).
+  </Step>
+</Steps>
+
+## StrategySignal type
+
+Both engines return the same union type. The `system` field is populated only by Peach Hybrid and identifies which subsystem (V1 or V2) produced the signal.
+
+```typescript
+export type StrategySignal =
+  | {
+      type: "long";
+      reason: "long-trigger" | "v1-long" | "v2-long";
+      indicators: IndicatorSnapshot;
+      trend: TrendSnapshot;
+      system?: "v1" | "v2";
+    }
+  | {
+      type: "short";
+      reason: "short-trigger" | "v1-short" | "v2-short";
+      indicators: IndicatorSnapshot;
+      trend: TrendSnapshot;
+      system?: "v1" | "v2";
+    }
+  | null;
+```
+
+## Choosing a strategy
+
+| | Watermellon | Peach Hybrid |
+|---|---|---|
+| **Signal type** | Trend-following | Hybrid (trend + momentum) |
+| **Systems** | Single | Dual — V1 trend and V2 momentum |
+| **Indicators** | 3 EMAs (8/21/48), RSI(14), ADX(14) | 5 EMAs V1 (8/21/48 + 5/13), 3 EMAs V2 (3/8/13), RSI(14), ADX(14), ATR(14) |
+| **Good for** | Sustained trending markets | Momentum surges and mixed regimes |
+| **Typical bar frequency** | Lower — leading-edge transitions only | Higher — V2 fires on RSI delta + volume spikes |
+| **Warmup bars needed** | ~48 bars (slowest EMA period) | ~48 bars V1, ~13 bars V2 |
+
+<CardGroup cols={2}>
+  <Card
+    title="Watermellon"
+    icon="chart-line"
+    href="/strategies/watermellon"
+  >
+    EMA stack with RSI filter and ADX regime gate. Suitable for trending
+    perpetual futures markets.
+  </Card>
+  <Card
+    title="Peach Hybrid"
+    icon="bolt"
+    href="/strategies/peach-hybrid"
+  >
+    Dual-system engine combining V1 EMA trend bias with V2 RSI/volume momentum
+    detection.
+  </Card>
+</CardGroup>

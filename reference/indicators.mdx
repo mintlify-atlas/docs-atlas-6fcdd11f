@@ -1,0 +1,109 @@
+---
+title: "Technical indicators: EMA, RSI, ADX, and ATR"
+description: "EMA, RSI, ADX, and ATR implementations used by the Watermellon and Peach Hybrid strategy engines — their constructors, update signatures, and warmup behavior."
+---
+
+Aster Bot implements four technical indicators — EMA, RSI, ADX, and ATR — as incremental (online) calculators that update one bar at a time. They are consumed by the Watermellon and Peach Hybrid strategy engines and should not need to be modified for standard usage. Each indicator is instantiated with a period length and exposes an `.update()` method that accepts new price data and returns the current value.
+
+<Note>
+  RSI, ADX, and ATR return `null` during their warmup periods before enough bars have been processed. EMA is the exception — it initializes on the first bar and never returns `null`. No entry signals are generated while any required indicator's `isReady` is `false`. The strategy engine checks `isReady` before evaluating conditions.
+</Note>
+
+## EMA (Exponential Moving Average)
+
+**File:** `src/lib/indicators/ema.ts`
+
+EMA applies exponentially decreasing weights to past prices. The smoothing multiplier is `2 / (length + 1)`, the standard formula.
+
+```typescript
+export class EMA {
+  constructor(length: number)
+  update(value: number): number
+  get value(): number          // throws if not yet initialized
+  get isReady(): boolean
+}
+```
+
+The EMA initializes on the very first bar (the first call to `.update()` seeds `current = value`), so `isReady` is `true` after a single update. There is no `null`-returning warmup period — the indicator returns a number from bar one.
+
+**Strategy usage:**
+
+- **Watermellon** uses three EMA instances: fast (8), mid (21), slow (48). The stack alignment (`emaFast > emaMid > emaSlow` for longs) is the primary trend filter.
+- **Peach Hybrid V1** uses five EMAs — three standard (`emaFastLen`, `emaMidLen`, `emaSlowLen`) plus two micro EMAs (`emaMicroFastLen`, `emaMicroSlowLen`) for short-term momentum.
+- **Peach Hybrid V2** uses three EMAs (`emaFastLen`, `emaMidLen`, `emaSlowLen`).
+
+## RSI (Relative Strength Index)
+
+**File:** `src/lib/indicators/rsi.ts`
+
+RSI measures momentum as a ratio of average gains to average losses over a rolling window. The implementation uses Wilder's exponential smoothing (`alpha = 1 / length`) after the initial SMA-style accumulation phase. The length must be at least 2.
+
+```typescript
+export class RSI {
+  constructor(length: number)
+  update(value: number): number   // returns 50 on first bar
+  get value(): number | null
+  get isReady(): boolean          // true when updateCount >= length
+}
+```
+
+On the first call, `.update()` seeds `prevValue` and returns `50`. The indicator accumulates a simple average for the first `length` bars, then switches to exponential smoothing. `isReady` becomes `true` once `updateCount >= length`.
+
+Edge cases handled explicitly:
+
+- If `avgLoss === 0` and `avgGain > 0`: returns `100`
+- If `avgGain === 0`: returns `0`
+
+**Strategy usage:**
+
+- **Watermellon** uses RSI (default `rsiLength`) as a momentum gate: longs require RSI ≥ `rsiMinLong`; shorts require RSI ≤ `rsiMaxShort`.
+- **Peach Hybrid V1** applies the same RSI threshold filter per sub-system.
+- **Peach Hybrid V2** uses RSI as a momentum quality filter via `rsiMomentumThreshold`.
+
+## ADX (Average Directional Index)
+
+**File:** `src/lib/indicators/adx.ts`
+
+ADX quantifies trend strength on a 0–100 scale, independent of direction. It is computed from the +DI and −DI directional movement indicators. The default period is 14.
+
+```typescript
+export class ADX {
+  constructor(length: number = 14)
+  update(high: number, low: number, close: number): number | null
+  get value(): number | null
+  get isReady(): boolean           // true when adxValue !== null
+  get warmupProgress(): number     // 0.0 – 0.99 during warmup, 1.0 when ready
+  isTrending(threshold?: number): boolean  // default threshold: 25
+}
+```
+
+`.update()` returns `null` during warmup. The indicator needs `2 * length + 2` bars before it yields its first ADX value. `warmupProgress` provides a 0–1 fraction for UI or logging purposes.
+
+After the initial SMA seed (`updateCount === length + 1`), the implementation switches to exponential smoothing (`alpha = 1 / length`) for both the ATR and DI components.
+
+**Strategy usage:**
+
+- **Watermellon** uses ADX as the primary trend gate: when `ADX < adxThreshold` (configurable), the market regime is `"ranging"` and all entry signals are blocked. The `adxReady` flag in signal logs shows when this gate is active.
+- **Peach Hybrid** instantiates ADX at 14 periods (hardcoded). It is available as context but does not block signals the same way as in Watermellon.
+
+## ATR (Average True Range)
+
+**File:** `src/lib/indicators/atr.ts`
+
+ATR measures volatility as the exponentially smoothed average of the true range. The true range is `max(high − low, |high − prevClose|, |low − prevClose|)`. The default period is 14.
+
+```typescript
+export class ATR {
+  constructor(length: number = 14)
+  update(high: number, low: number, close: number): number | null
+  get value(): number | null
+  get isReady(): boolean     // true when atrValue !== null
+}
+```
+
+`.update()` returns `null` for the first bar (used to seed `prevHigh`, `prevLow`, `prevClose`) and for the following `length - 1` bars during the SMA seed phase. On bar `length`, it computes the initial ATR as the simple average of accumulated true ranges. Subsequent bars use exponential smoothing: `atr = atr * (1 − alpha) + tr * alpha` where `alpha = 1 / length`.
+
+**Strategy usage:**
+
+- **Peach Hybrid** uses ATR for volatility context, primarily to inform stop placement calculations. The ATR value is included in signal and trade log `indicators` objects as the top-level `atr` field.
+- **Watermellon** does not use ATR for signal generation but records it in trade logs for post-trade analysis.

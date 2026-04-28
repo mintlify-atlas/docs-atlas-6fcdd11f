@@ -1,0 +1,61 @@
+---
+title: "Prerequisites and requirements for Aster Bot"
+description: "Required software versions, AsterDEX account setup, private key format, and knowledge requirements before installing and running Aster Bot."
+---
+
+Before installing Aster Bot, confirm you have the software, credentials, and background knowledge listed below. Meeting these requirements upfront avoids the most common startup failures.
+
+## Software requirements
+
+| Requirement | Version / detail |
+|---|---|
+| **Node.js** | 18 or later. The bot runs via `tsx src/bot/index.ts` (invoked by `npm run bot`). |
+| **npm** | Bundled with Node.js. Used for `npm install` and `npm run bot`. |
+| **TypeScript** | No separate install needed for running the bot — `tsx` handles execution. Familiarity with TypeScript is recommended if you plan to extend or modify strategy or execution code. |
+
+Verify your Node.js version:
+
+```bash
+node --version
+```
+
+## AsterDEX account and API credentials
+
+You need an active [AsterDEX](https://www.asterdex.com) account with futures API access enabled. From the exchange you will obtain two values to set in `.env.local`:
+
+- **`ASTER_API_KEY`** — your API key from the AsterDEX settings panel
+- **`ASTER_API_SECRET`** — the corresponding API secret
+
+Follow the API key creation instructions in the AsterDEX interface. Restrict the key to the minimum required permissions (read market data, place/cancel orders) and, where supported, bind it to your server's IP address.
+
+## EVM private key for the trading wallet
+
+`TRADING_WALLET_PRIVATE_KEY` is required and validated on every startup. It must be:
+
+- Exactly **64 hexadecimal characters** representing a 32-byte secp256k1 private key
+- An optional `0x` or `0X` prefix is accepted
+- Any other format — too short, too long, non-hex characters, or empty — causes the bot to exit immediately with an error
+
+The legacy variable `ASTER_PRIVATE_KEY` is not read. Only `TRADING_WALLET_PRIVATE_KEY` is recognized.
+
+<Warning>
+  Store your private key only in `.env.local` on the machine running the bot. Never share it, log it, or commit it to version control.
+</Warning>
+
+## Production hosting
+
+For continuous operation the bot should run on a stable host:
+
+| Option | Notes |
+|---|---|
+| **Linux VPS** | Recommended for 24/7 operation. The included `ecosystem.config.js` targets PM2 on Linux. |
+| **PM2** | Process manager for Node.js. Handles auto-restart, log rotation, and startup-on-boot. Install globally with `npm install -g pm2`. |
+| **systemd** | Alternative to PM2 on systemd-based Linux distributions. Adapt the unit file to the process name `watermellon-bot` (the name used in `ecosystem.config.js`). |
+
+## Optional: Redis
+
+`ioredis-om` is listed as a dependency in `package.json` but Redis is **not required** for basic operation. The core bot loop, strategy engines, logging, and state persistence all work without a Redis instance. You only need Redis if you enable features that explicitly depend on it.
+
+<Note>
+  **Supported leverage values:** `MAX_LEVERAGE` must be set to one of **5, 10, 15, or 50**. These are the leverage tiers supported by AsterDEX. Any other value will not behave as expected — check the AsterDEX documentation for the current list of accepted leverage settings for the ASTERUSDT-PERP market.
+</Note>

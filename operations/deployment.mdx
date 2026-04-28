@@ -1,0 +1,168 @@
+---
+title: 'Deploy Aster Bot with PM2 or systemd on Linux'
+description: 'Run Aster Bot as a managed process in production using the included PM2 ecosystem config or systemd unit file on a Linux VPS with UTC clock.'
+---
+
+For production use, run Aster Bot as a managed process under PM2 or systemd on a Linux VPS. Both managers restart the process if it crashes, capture logs, and survive server reboots. Before deploying, set your server clock to UTC — this keeps log timestamps consistent and avoids ambiguous offsets when reviewing daily trade files.
+
+<Tabs>
+  <Tab title="PM2">
+    PM2 is a Node.js process manager that integrates well with npm-based projects and provides log rotation, memory guards, and a simple CLI.
+
+    ### ecosystem.config.js
+
+    The repository ships with a ready-to-use `ecosystem.config.js`:
+
+    ```js
+    module.exports = {
+      apps: [
+        {
+          name: "watermellon-bot",
+          script: "npm",
+          args: "run bot",
+          cwd: __dirname,
+          instances: 1,
+          autorestart: true,
+          watch: false,
+          max_memory_restart: "500M",
+          env: {
+            NODE_ENV: "production",
+          },
+          error_file: "./logs/pm2-error.log",
+          out_file: "./logs/pm2-out.log",
+          log_date_format: "YYYY-MM-DD HH:mm:ss Z",
+          merge_logs: true,
+        },
+      ],
+    };
+    ```
+
+    | Field | Value | Purpose |
+    |---|---|---|
+    | `name` | `watermellon-bot` | Process name used in all PM2 commands |
+    | `script` / `args` | `npm run bot` | Equivalent to running `npm run bot` in the shell |
+    | `autorestart` | `true` | Restarts automatically on crash or unexpected exit |
+    | `max_memory_restart` | `500M` | Restarts the process if RSS exceeds 500 MB |
+    | `error_file` | `./logs/pm2-error.log` | Captures stderr |
+    | `out_file` | `./logs/pm2-out.log` | Captures stdout |
+    | `log_date_format` | `YYYY-MM-DD HH:mm:ss Z` | Prefixes each log line with a timestamp |
+    | `merge_logs` | `true` | Combines stdout and stderr into a single stream |
+
+    ### Start with PM2
+
+    <Steps>
+      <Step title="Install PM2">
+        ```bash
+        npm install -g pm2
+        ```
+      </Step>
+      <Step title="Start the bot">
+        ```bash
+        pm2 start ecosystem.config.js
+        ```
+      </Step>
+      <Step title="Persist across reboots">
+        Save the process list and install the startup hook for your init system:
+
+        ```bash
+        pm2 save
+        pm2 startup
+        ```
+
+        Follow the command printed by `pm2 startup` — it typically requires running one `sudo` command.
+      </Step>
+    </Steps>
+
+    ### Common PM2 commands
+
+    ```bash
+    # Tail live logs
+    pm2 logs watermellon-bot
+
+    # Restart
+    pm2 restart watermellon-bot
+
+    # Stop
+    pm2 stop watermellon-bot
+
+    # List all processes
+    pm2 list
+    ```
+  </Tab>
+  <Tab title="systemd">
+    systemd is the standard init system on most Linux distributions. The repository ships with `watermellon-bot.service` which you can install directly or adapt to your environment.
+
+    ### watermellon-bot.service
+
+    ```ini
+    [Unit]
+    Description=Watermellon Trading Bot for AsterDEX
+    After=network.target
+
+    [Service]
+    Type=simple
+    User=aster
+    WorkingDirectory=/path/to/aster-bot
+    Environment="NODE_ENV=production"
+    ExecStart=/usr/bin/npm run bot
+    Restart=always
+    RestartSec=10
+    StandardOutput=journal
+    StandardError=journal
+
+    [Install]
+    WantedBy=multi-user.target
+    ```
+
+    Edit `WorkingDirectory` to the absolute path of your `aster-bot` directory and set `User` to the system user that owns the files.
+
+    ### Install and start
+
+    <Steps>
+      <Step title="Copy the unit file">
+        ```bash
+        sudo cp watermellon-bot.service /etc/systemd/system/watermellon-bot.service
+        ```
+      </Step>
+      <Step title="Reload systemd">
+        ```bash
+        sudo systemctl daemon-reload
+        ```
+      </Step>
+      <Step title="Enable on boot">
+        ```bash
+        sudo systemctl enable watermellon-bot
+        ```
+      </Step>
+      <Step title="Start the service">
+        ```bash
+        sudo systemctl start watermellon-bot
+        ```
+      </Step>
+    </Steps>
+
+    ### Common systemd commands
+
+    ```bash
+    # Tail live logs
+    journalctl -u watermellon-bot -f
+
+    # Check status
+    systemctl status watermellon-bot
+
+    # Restart
+    sudo systemctl restart watermellon-bot
+
+    # Stop
+    sudo systemctl stop watermellon-bot
+    ```
+  </Tab>
+</Tabs>
+
+## VPS recommendations
+
+- **Set the server timezone to UTC.** Log timestamps in `data/trades/daily/` use UTC; mismatched server clocks cause confusing offsets.
+- **Set `NODE_ENV=production`.** Both the PM2 ecosystem config and the systemd unit file do this automatically.
+- **Restrict your API key.** On AsterDEX, bind the API key to your VPS IP address to limit exposure if the key is leaked.
+- **Allow 500 MB memory headroom.** The `max_memory_restart` default in the PM2 config is `500M`. Size your VPS accordingly — 1 GB RAM minimum is a safe baseline.
+- **Keep `.env.local` out of version control.** It contains your private key and API secret. Verify `.env.local` is listed in `.gitignore` before every commit.

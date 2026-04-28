@@ -1,0 +1,121 @@
+---
+title: "Peach Hybrid: dual V1 trend and V2 momentum strategy"
+description: "Peach Hybrid runs two subsystems per bar: V1 EMA trend bias and V2 RSI/volume momentum surge. Each signal is tagged with the subsystem that produced it."
+---
+
+Peach Hybrid runs two independent subsystems against every closed `SyntheticBar`. V1 detects trend bias using macro-EMA alignment, micro-EMA entry refinement, and RSI filtering — similar in character to Watermellon but with additional guards. V2 detects momentum surges by measuring RSI delta across a short window and confirming with a volume spike. Each bar is checked against V1 first; if V1 returns a signal, V2 is skipped for that bar. Every signal is tagged with `system: "v1"` or `system: "v2"` so downstream logging and risk rules can treat them differently.
+
+## V1 system — trend and bias
+
+V1 uses five EMAs: three macro EMAs (fast/mid/slow) that establish the broad trend direction, and two micro EMAs (micro-fast/micro-slow) that act as a shorter-term entry filter. All five are computed on the bar's close price.
+
+**Signal conditions:**
+
+- **Bull macro stack:** `emaFast > emaMid && emaMid > emaSlow`
+- **Bear macro stack:** `emaFast < emaMid && emaMid < emaSlow`
+- **Micro confirmation (long):** `emaMicroFast > emaMicroSlow`
+- **Micro confirmation (short):** `emaMicroFast < emaMicroSlow`
+- **RSI band (long):** `rsi > rsiMinLong` (default 42)
+- **RSI band (short):** `rsi < rsiMaxShort` (default 58)
+
+A `longLook` requires bull macro stack + micro bull confirmation + RSI above band. A `shortLook` requires the inverse. As with Watermellon, signals fire only on the leading-edge transition from `false` to `true`.
+
+Two additional guards prevent back-to-back entries:
+
+- **`minBarsBetween`** (default 1) — V1 will not fire again until at least this many bars have elapsed since the last V1 signal.
+- **`minMovePercent`** (default 0.10) — the current price must have moved at least this percentage from the price at the last long or short signal before a new V1 signal is allowed.
+
+**Default V1 parameters:**
+
+| Parameter | Default | Description |
+|---|---|---|
+| `PEACH_V1_EMA_FAST` | 8 | Fast macro EMA period |
+| `PEACH_V1_EMA_MID` | 21 | Mid macro EMA period |
+| `PEACH_V1_EMA_SLOW` | 48 | Slow macro EMA period |
+| `PEACH_V1_EMA_MICRO_FAST` | 5 | Micro fast EMA period |
+| `PEACH_V1_EMA_MICRO_SLOW` | 13 | Micro slow EMA period |
+| `PEACH_V1_RSI_MIN_LONG` | 42 | Minimum RSI for a long look |
+| `PEACH_V1_RSI_MAX_SHORT` | 58 | Maximum RSI for a short look |
+| `PEACH_V1_MIN_BARS_BETWEEN` | 1 | Minimum bars between V1 signals |
+| `PEACH_V1_MIN_MOVE_PCT` | 0.10 | Minimum price move % since last signal |
+
+## V2 system — momentum surge
+
+V2 uses three shorter EMAs (fast/mid/slow) for directional context and measures RSI momentum by comparing the current RSI value against the value from two bars ago. A volume spike relative to a rolling average confirms that the surge is backed by real activity.
+
+**Signal conditions:**
+
+- **RSI delta:** `|rsi[now] - rsi[2 bars ago]| >= rsiMomentumThreshold` (default 4.0)
+- **Volume spike:** `currentVolume >= avgVolume * volumeMultiplier` (default 2.0×)
+- **Long:** RSI delta is positive (upward momentum) + bullish candle close (`close > open`) + bullish EMA stack
+- **Short:** RSI delta is negative (downward momentum) + bearish candle close (`close <= open`) + bearish EMA stack
+
+V2 maintains a rolling `volumeHistory` buffer of the last `volumeLookback` bars (default 4) to compute `avgVolume`. The RSI history buffer keeps the three most recent RSI values needed for the delta calculation.
+
+**Default V2 parameters:**
+
+| Parameter | Default | Description |
+|---|---|---|
+| `PEACH_V2_EMA_FAST` | 3 | Fast EMA period |
+| `PEACH_V2_EMA_MID` | 8 | Mid EMA period |
+| `PEACH_V2_EMA_SLOW` | 13 | Slow EMA period |
+| `PEACH_V2_RSI_MOMENTUM_THRESHOLD` | 4.0 | Minimum RSI delta to qualify as a surge |
+| `PEACH_V2_VOLUME_LOOKBACK` | 4 | Bars used to compute average volume |
+| `PEACH_V2_VOLUME_MULTIPLIER` | 2.0 | Current volume must exceed this multiple of average |
+| `PEACH_V2_EXIT_VOLUME_MULTIPLIER` | 1.2 | Volume floor below which an exit may be triggered |
+
+## StrategySignal and system tagging
+
+The `system` field on `StrategySignal` identifies which subsystem fired. Use this in logs and risk rules to distinguish trend entries from momentum entries.
+
+```typescript
+export type StrategySignal =
+  | { type: "long"; reason: "long-trigger" | "v1-long" | "v2-long"; indicators: IndicatorSnapshot; trend: TrendSnapshot; system?: "v1" | "v2"; }
+  | { type: "short"; reason: "short-trigger" | "v1-short" | "v2-short"; indicators: IndicatorSnapshot; trend: TrendSnapshot; system?: "v1" | "v2"; }
+  | null;
+```
+
+V1 signals carry `reason: "v1-long"` or `"v1-short"`. V2 signals carry `reason: "v2-long"` or `"v2-short"`.
+
+## Exit signals
+
+The `ExitSignal` type defines the reasons a position may be closed outside of a normal opposite-direction signal:
+
+```typescript
+export type ExitSignal = {
+  reason: "rsi-flattening" | "volume-drop" | "opposite-signal" | "stop-loss" | "emergency-stop";
+  details?: Record<string, unknown>;
+};
+```
+
+`PeachHybridEngine` exposes a `checkExitConditions(bar)` method that evaluates two V2-specific exit triggers on each bar:
+
+- **`rsi-flattening` + `volume-drop`:** if RSI momentum (over the last 3 values) drops below 2.0 and current volume is below `exitVolumeMultiplier × avgVolume`, the engine signals an exit.
+- **RSI reversal:** if the most recent RSI has moved adversely against the open position direction compared to two bars ago, an immediate exit is signalled.
+
+The remaining reasons — `opposite-signal`, `stop-loss`, and `emergency-stop` — are handled by the risk layer, not by the engine itself.
+
+## ADX and ATR
+
+`PeachHybridEngine` maintains an ADX(14) and ATR(14) indicator internally, both updated on every bar using the bar's high, low, and close.
+
+- **ADX** is exposed via `shouldAllowTrading(adxThreshold)` (default threshold 25). When ADX is still warming up, the method returns `true` to avoid blocking the early signal period. Once warmed, it returns `true` only when `adx >= adxThreshold`.
+- **ATR** is available via `getIndicatorValues().atr` and provides stop placement context to the risk layer — for example, setting a stop at entry price ± N × ATR.
+
+Neither indicator directly gates V1 or V2 signal logic inside the engine; their use is enforced by the risk layer configuration.
+
+## Tuning guidance
+
+<Warning>
+  Run dry-run for at least 24 hours before changing `PEACH_V2_RSI_MOMENTUM_THRESHOLD`. V2's surge detection is sensitive to this value — lowering it significantly can produce a large number of false positives during normal RSI fluctuation.
+</Warning>
+
+**`volumeMultiplier`** is the most sensitive V2 parameter. Lowering it from 2.0 to, say, 1.5 allows more signals through but includes bars where the volume increase is modest. Raise it above 2.0 for stricter confirmation.
+
+**`PEACH_V1_MIN_BARS_BETWEEN`** prevents consecutive V1 signals in rapidly oscillating conditions. Increasing it to 2 or 3 adds a cooling-off period between trend entries.
+
+**`PEACH_V1_MIN_MOVE_PCT`** filters out re-entries near the same price level. A value of 0.10 requires a 0.1% move; raising this to 0.20–0.30 reduces noise on low-volatility assets.
+
+**V1 micro EMAs (5/13)** can be widened (for example 8/21) to make micro-confirmation slower and less reactive, reducing false entry refinement signals during consolidation.
+
+For a full list of environment variables that map to these parameters, see [Strategy configuration](/configuration/strategies).

@@ -1,81 +1,96 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
-icon: 'rocket'
+title: "Quickstart: run Aster Bot in dry-run mode"
+description: "Learn how to clone, configure, and run Aster Bot in dry-run mode in five steps. Covers API credentials, env setup, and first bot run."
 ---
 
-## Get started in three steps
+This guide walks you through getting Aster Bot running locally in dry-run mode — no real orders are placed, and all execution is simulated and logged. Complete these five steps and you will have a working bot process writing signals and trade records to `data/trades/daily/`.
 
-Get your documentation site running locally and make your first customization.
+<Warning>
+  Never commit `.env.local` or your private key to version control. Add `.env.local` to your `.gitignore` before making any commits.
+</Warning>
 
-### Step 1: Set up your local environment
+<Steps>
+  <Step title="Clone the repository">
+    Clone the repo and enter the project directory:
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+    ```bash
+    git clone https://github.com/SignalBot-Labs/aster-bot.git && cd aster-bot
+    ```
+  </Step>
 
-### Step 2: Deploy your changes
+  <Step title="Install dependencies">
+    Install Node.js packages with npm:
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+    ```bash
+    npm install
+    ```
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+    Node.js 18 or later is required. Run `node --version` to confirm.
+  </Step>
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+  <Step title="Copy the example environment file">
+    Create your local configuration file from the provided template:
 
-### Step 3: Go live
+    ```bash
+    cp env.example .env.local
+    ```
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+    The bot reads `.env.local` first, then `.env` as a fallback. Never edit `env.example` directly — keep it as a reference.
+  </Step>
+
+  <Step title="Configure your environment variables">
+    Open `.env.local` in an editor and set the following required variables:
+
+    ```bash
+    ASTER_RPC_URL=https://fapi.asterdex.com
+    ASTER_WS_URL=wss://fstream.asterdex.com/ws
+    ASTER_API_KEY=your_api_key_here
+    ASTER_API_SECRET=your_api_secret_here
+    TRADING_WALLET_PRIVATE_KEY=your_64_char_hex_key_here
+    PAIR_SYMBOL=ASTERUSDT-PERP
+    MODE=dry-run
+    ```
+
+    `TRADING_WALLET_PRIVATE_KEY` must be a 64-character hexadecimal EVM private key. An optional `0x` prefix is accepted. The bot validates this on startup and exits immediately with an error if the value is missing, empty, or does not match the 64-hex-character format. The legacy variable `ASTER_PRIVATE_KEY` is not read.
+
+    All other variables in `env.example` (strategy parameters, risk limits, timeframe) have sensible defaults and are optional for a first run.
+  </Step>
+
+  <Step title="Start the bot">
+    Run the bot with:
+
+    ```bash
+    npm run bot
+    ```
+
+    This executes `tsx src/bot/index.ts`. On a successful startup you will see:
+
+    - Confirmation that the private key is valid
+    - A `Min-price guard OK` line with the `web3.prc` reference price
+    - A line confirming `DryRunExecutor` is active
+    - Live tick and signal output as bars close
+
+    Trade and signal files appear in `data/trades/daily/` dated to the current day.
+  </Step>
+</Steps>
+
+<Note>
+  **Startup price guard:** before opening the WebSocket, the bot calls `prices()` from the `web3.prc` package and reads the `responsive` field. If that value is below `0.871` USDT (the `limitPrice` constant in `src/lib/spotPrice.ts`), the process exits and does not trade. Set `SKIP_MIN_SPOT_CHECK=true` in `.env.local` to bypass this check during local testing only — do not use this flag in production.
+</Note>
+
+## What dry-run mode does
+
+With `MODE=dry-run`, no orders are sent to AsterDEX. The `DryRunExecutor` simulates fills at the current market price and records them to the daily log files exactly as a live run would. This lets you validate strategy behavior, indicator values, and risk filtering before committing real capital.
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
+Once the bot is running and you can see signal output in the logs, configure your risk limits and review the full environment variable reference before switching to live mode.
 
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Environment variables" icon="sliders" href="/configuration/environment-variables">
+    Complete reference for every variable — strategy params, risk limits, and runtime flags.
+  </Card>
+  <Card title="Risk management" icon="shield" href="/configuration/risk-management">
+    Set position size caps, leverage, stop-loss, and flip frequency limits before going live.
+  </Card>
 </CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>

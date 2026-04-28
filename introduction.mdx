@@ -1,0 +1,57 @@
+---
+title: "Aster Bot: perpetual futures trading on AsterDEX"
+description: "Aster Bot automates ASTERUSDT-PERP trading on AsterDEX with dual strategy engines, configurable risk controls, and full audit logging for global operators."
+---
+
+Aster Bot is a TypeScript/Node.js system that connects to [AsterDEX](https://www.asterdex.com) via `fapi.asterdex.com` and trades the ASTERUSDT perpetual futures market around the clock. It is built for operators who want a repeatable, environment-driven workflow: validate parameters in dry-run, then deploy in live mode with defined position limits and a complete audit trail.
+
+## What Aster Bot does
+
+The bot subscribes to the AsterDEX WebSocket feed (`wss://fstream.asterdex.com/ws`) and processes real-time price ticks for the `ASTERUSDT-PERP` pair. On each virtual bar close it evaluates one of two strategy engines, applies a configurable risk layer, and routes the resulting signal to either a simulated (dry-run) or live executor. All activity — signals taken, signals skipped, fills, and P&L — is written to daily CSV and JSON files under `data/trades/daily/` and persisted to `data/bot-state.json` so the bot restarts coherently.
+
+## Strategy engines
+
+Two strategies ship with the bot. Both consume the same virtual bar stream built from raw ticks at the interval you set with `VIRTUAL_TIMEFRAME_MS`.
+
+**Watermellon** is a trend-following engine. It aligns a fast/mid/slow EMA stack (defaults 8/21/48) with an RSI filter: a long signal requires a bullish EMA stack and RSI above the configured minimum; a short signal requires a bearish stack and RSI below the configured maximum. An ADX gate can further restrict entries to trending conditions.
+
+**Peach Hybrid** is a dual-engine system combining two subsystems:
+
+- **V1 (bias/trend):** Uses a standard EMA stack plus a micro-EMA pair (5/13 defaults) to establish directional bias, with RSI band filtering, a minimum-bar spacing between signals, and a minimum price-move threshold to reduce low-quality entries.
+- **V2 (momentum surge):** Detects acceleration using a tighter EMA stack (3/8/13 defaults), an RSI momentum delta threshold, and volume confirmation against a rolling lookback window.
+
+Both subsystems share the same risk and position management layer. Peach Hybrid is the default strategy.
+
+## Who this is for
+
+Aster Bot is designed for three audiences:
+
+- **Quantitative and systematic traders** who want a single-pair, single-codebase system with clear environment-variable-driven behavior they can audit and reproduce.
+- **Global operators** who can run the bot anywhere in the world — it depends only on AsterDEX API credentials and a standard Node.js host or Linux VPS.
+- **TypeScript developers** who want to read, extend, or adapt the strategy and execution code without friction.
+
+## Key capabilities
+
+| Capability | Detail |
+|---|---|
+| **Dry-run mode** | Simulates execution end-to-end with no real orders placed. Start here to validate configuration. |
+| **Live mode** | Places real orders via `fapi.asterdex.com`. Shows a 5-second warning before starting. |
+| **Risk controls** | Position size cap (`MAX_POSITION_USDT`), leverage limits (5/10/15/50), flip frequency cap, emergency stop, optional trailing stop. |
+| **Persistent state** | `data/bot-state.json` stores position and session state across restarts. |
+| **Daily logging** | `trades-YYYY-MM-DD.csv`, `trades-YYYY-MM-DD.json`, and `signals-YYYY-MM-DD.json` written to `data/trades/daily/`. |
+| **Startup guard** | Checks `web3.prc` reference price before opening WebSocket; exits if price is below 0.871 USDT. |
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Clone, configure, and run the bot in dry-run mode in five steps.
+  </Card>
+  <Card title="Environment variables" icon="sliders" href="/configuration/environment-variables">
+    Full reference for every supported environment variable and its defaults.
+  </Card>
+  <Card title="Strategies overview" icon="chart-line" href="/strategies/overview">
+    Detailed breakdown of Watermellon and Peach Hybrid parameters and signal logic.
+  </Card>
+  <Card title="Risk management" icon="shield" href="/configuration/risk-management">
+    Configure position limits, stops, flip controls, and regime filters.
+  </Card>
+</CardGroup>

@@ -1,0 +1,73 @@
+---
+title: "Watermellon strategy: EMA trend with RSI filter"
+description: "Watermellon uses a three-EMA stack and RSI thresholds to follow trends on AsterDEX perpetuals, gated by ADX regime detection to avoid choppy markets."
+---
+
+Watermellon is the simpler of Aster Bot's two strategy engines. It uses three exponential moving averages — fast, mid, and slow — to establish trend direction, and RSI to qualify signal quality before an entry fires. An ADX gate prevents any signal from being issued when the market is ranging. Signals fire only on the leading edge of a qualifying condition, not continuously, so the engine emits at most one long signal per trend impulse and one short signal per bear impulse.
+
+## How signals are generated
+
+### EMA stack alignment
+
+On each closed `SyntheticBar`, the engine updates three EMAs on the bar's close price. A bull stack exists when `emaFast > emaMid > emaSlow`; a bear stack is the inverse.
+
+### RSI qualification
+
+An RSI(14) value is computed on the same close price. A long look requires the RSI to be above both `rsiMinLong` (default 42) and the hard floor of 55. A short look requires the RSI to be below both `rsiMaxShort` (default 58) and the hard ceiling of 45.
+
+### ADX gate
+
+Before evaluating the stack, the engine checks ADX(14). If `adx < adxThreshold` (default 25) or ADX has not yet warmed up, the engine clears both look states and returns `null`. This prevents entries during low-volatility, sideways conditions.
+
+### Leading-edge trigger
+
+A signal is emitted only when the look state transitions from `false` to `true` — the rising edge. Holding a bull stack and qualifying RSI across multiple consecutive bars does not produce repeated signals.
+
+```typescript
+const bullStack = emaFastValue > emaMidValue && emaMidValue > emaSlowValue;
+const bearStack = emaFastValue < emaMidValue && emaMidValue < emaSlowValue;
+
+const longLook = bullStack && rsiValue > this.config.rsiMinLong && rsiValue > 55;
+const shortLook = bearStack && rsiValue < this.config.rsiMaxShort && rsiValue < 45;
+
+const longTrig = longLook && !this.lastLongLook;
+const shortTrig = shortLook && !this.lastShortLook;
+```
+
+When `longTrig` is `true` the engine returns `{ type: "long", reason: "long-trigger", ... }`. When `shortTrig` is `true` it returns `{ type: "short", reason: "short-trigger", ... }`. Both include an `IndicatorSnapshot` and a `TrendSnapshot` for downstream logging and risk checks.
+
+## Default configuration
+
+These values are set in `DEFAULT_CONFIG` inside `watermellonEngine.ts` and in `spec.ts`. They are applied when no override is provided to the `WatermellonEngine` constructor.
+
+```typescript
+const DEFAULT_CONFIG: WatermellonConfig = {
+  timeframeMs: 30_000,   // virtual bar interval in milliseconds
+  emaFastLen: 8,
+  emaMidLen: 21,
+  emaSlowLen: 48,
+  rsiLength: 14,
+  rsiMinLong: 42,        // RSI must exceed this AND 55 for a long look
+  rsiMaxShort: 58,       // RSI must be below this AND 45 for a short look
+  adxLength: 14,
+  adxThreshold: 25,      // no signal when ADX is below this value
+};
+```
+
+## Tuning guidance
+
+<Tip>
+  Always validate parameter changes in dry-run mode for at least several hours
+  before switching to live trading. Leading-edge logic means the first signal
+  after a parameter change may not appear until the next full trend transition.
+</Tip>
+
+**EMA periods** — Wider spacing between periods (for example 8 / 21 / 55 instead of 8 / 21 / 48) produces a slower, cleaner trend signal with fewer false stacks in choppy conditions. Narrowing the gap makes the stack more sensitive and increases signal frequency.
+
+**`rsiMinLong`** — Raising this value (for example from 42 to 50) restricts long entries to bars where RSI is already showing clear upward momentum. This produces fewer but potentially higher-quality entries. The effective threshold for a long look is `max(rsiMinLong, 55)`, so values below 55 only affect the config record; the hard floor of 55 still applies.
+
+**`rsiMaxShort`** — Lowering this value (for example from 58 to 50) works symmetrically for short entries. The effective ceiling is `min(rsiMaxShort, 45)`.
+
+**`adxThreshold`** — A range of 20–30 is typical. Higher values restrict entries to stronger, more established trends but will reduce signal count during moderate trend phases. A threshold of 20 opens the gate earlier; 30 requires a confirmed strong trend.
+
+For a full list of environment variables that map to these parameters, see [Strategy configuration](/configuration/strategies).

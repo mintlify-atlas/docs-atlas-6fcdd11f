@@ -1,0 +1,111 @@
+---
+title: "Aster Bot environment variable reference"
+description: "Complete reference for all Aster Bot environment variables: credentials, MODE, startup guards, and strategy selection. All values are Zod-validated at startup."
+---
+
+Aster Bot is configured entirely through environment variables. At startup, `loadConfig()` reads `process.env`, validates every value against a Zod schema, and throws a descriptive error if anything is missing or malformed. Variables are typically placed in a `.env.local` file at the project root — this file is loaded before the schema runs.
+
+## Connection & credentials
+
+These variables establish the connection to AsterDEX and authenticate the bot. All six are required; the bot will not start if any are absent or invalid.
+
+<ParamField path="ASTER_RPC_URL" type="string" required>
+  The HTTP REST endpoint for the AsterDEX Futures API. Must be a valid URL.
+
+  **Default:** `https://fapi.asterdex.com`
+</ParamField>
+
+<ParamField path="ASTER_WS_URL" type="string" required>
+  The WebSocket endpoint for real-time trade stream data.
+
+  **Default:** `wss://fstream.asterdex.com/ws`
+</ParamField>
+
+<ParamField path="ASTER_API_KEY" type="string" required>
+  Your AsterDEX API key. Must be at least one character. Generated from the AsterDEX dashboard under API Management.
+</ParamField>
+
+<ParamField path="ASTER_API_SECRET" type="string" required>
+  Your AsterDEX API secret, paired with `ASTER_API_KEY`. Must be at least one character.
+</ParamField>
+
+<ParamField path="TRADING_WALLET_PRIVATE_KEY" type="string" required>
+  A 64-character hexadecimal EVM private key for the trading wallet. The `0x` prefix is accepted but optional. The bot validates the format on startup and exits immediately if the value is missing or malformed.
+
+  <Warning>
+    The legacy variable `ASTER_PRIVATE_KEY` is **not read** by the bot. Do not rely on it — set `TRADING_WALLET_PRIVATE_KEY` only.
+  </Warning>
+</ParamField>
+
+<ParamField path="PAIR_SYMBOL" type="string" required>
+  The perpetual futures trading pair to trade. Must match the symbol format used by AsterDEX.
+
+  **Default:** `ASTERUSDT-PERP`
+</ParamField>
+
+## Mode
+
+<ParamField path="MODE" type="string" required>
+  Controls whether the bot executes real orders or simulates them.
+
+  | Value | Behaviour |
+  |---|---|
+  | `dry-run` | Simulates order placement — no real trades are made. Safe for testing configuration and strategy logic. |
+  | `live` | Places real orders on AsterDEX. Only use after validating behaviour in `dry-run`. |
+</ParamField>
+
+## Startup guard
+
+<ParamField path="SKIP_MIN_SPOT_CHECK" type="boolean">
+  When `false` (the default), the bot queries `web3.prc`'s `prices().responsive` at startup and exits if the ASTER reference price is below **0.871 USDT** (the `limitPrice` constant in `src/lib/spotPrice.ts`). This prevents the bot from trading during extreme low-price conditions.
+
+  Set to `true` to bypass this check entirely. **Intended for local testing only** — do not disable this guard in a production deployment.
+
+  **Default:** `false`
+</ParamField>
+
+## Strategy selection
+
+<ParamField path="STRATEGY_TYPE" type="string">
+  Selects the active trading strategy. The detailed parameters for each strategy are configured separately — see the [Strategy parameters](/configuration/strategies) reference.
+
+  | Value | Strategy |
+  |---|---|
+  | `watermellon` | Triple-EMA + RSI trend-following strategy |
+  | `peach-hybrid` | Combined V1 trend/bias and V2 momentum-surge system |
+
+  **Default:** `watermellon`
+</ParamField>
+
+<ParamField path="VIRTUAL_TIMEFRAME_MS" type="number">
+  Duration in milliseconds of each synthetic price bar. The bot aggregates raw trade ticks into bars of this length before computing indicators. Shorter values increase signal frequency and CPU usage.
+
+  **Default:** `30000` (30 seconds)
+</ParamField>
+
+## Minimal .env.local
+
+The following is the smallest valid `.env.local` needed to start the bot in dry-run mode:
+
+```env
+ASTER_RPC_URL=https://fapi.asterdex.com
+ASTER_WS_URL=wss://fstream.asterdex.com/ws
+ASTER_API_KEY=your_api_key
+ASTER_API_SECRET=your_api_secret
+TRADING_WALLET_PRIVATE_KEY=your_64_char_hex_key
+PAIR_SYMBOL=ASTERUSDT-PERP
+MODE=dry-run
+```
+
+<Warning>
+  Never commit `.env.local` to version control. It contains your private key and API credentials. Add it to `.gitignore` before your first commit.
+</Warning>
+
+<CardGroup cols={2}>
+  <Card title="Risk management" icon="shield-halved" href="/configuration/risk-management">
+    Configure position sizing, leverage, stop-loss, and regime filters
+  </Card>
+  <Card title="Strategy parameters" icon="sliders" href="/configuration/strategies">
+    Tune Watermellon and Peach Hybrid indicator settings
+  </Card>
+</CardGroup>

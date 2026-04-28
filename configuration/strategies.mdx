@@ -1,0 +1,224 @@
+---
+title: "Watermellon and Peach Hybrid strategy parameters"
+description: "Env var reference for Watermellon and Peach Hybrid V1/V2 strategies, with code defaults from config.ts and example .env.local snippets for each strategy."
+---
+
+Strategy parameters are loaded by `loadConfig()` at startup alongside risk and credential settings. Every parameter is optional — when omitted, `loadConfig()` falls back to the hardcoded defaults defined in `src/lib/config.ts`. The active strategy is selected with `STRATEGY_TYPE`; parameters belonging to the inactive strategy are parsed but ignored at runtime.
+
+For `STRATEGY_TYPE` and `VIRTUAL_TIMEFRAME_MS`, see the [Environment variables](/configuration/environment-variables) reference, where they are documented alongside mode and startup settings.
+
+---
+
+## Watermellon strategy
+
+Active when `STRATEGY_TYPE=watermellon` (the code default). Watermellon is a triple-EMA stack with RSI confirmation: the bot enters long when the EMAs are bullishly stacked and RSI clears `RSI_MIN_LONG`, and enters short when they are bearishly stacked and RSI is below `RSI_MAX_SHORT`.
+
+<ParamField path="EMA_FAST" type="number">
+  Period length for the fast exponential moving average. Shorter periods make the EMA more reactive to recent price action.
+
+  **Default:** `8`
+</ParamField>
+
+<ParamField path="EMA_MID" type="number">
+  Period length for the mid exponential moving average.
+
+  **Default:** `21`
+</ParamField>
+
+<ParamField path="EMA_SLOW" type="number">
+  Period length for the slow exponential moving average. The three EMAs must satisfy `EMA_FAST < EMA_MID < EMA_SLOW` for stack logic to behave correctly.
+
+  **Default:** `48`
+</ParamField>
+
+<ParamField path="RSI_LENGTH" type="number">
+  Lookback period for the Relative Strength Index calculation.
+
+  **Default:** `14`
+</ParamField>
+
+<ParamField path="RSI_MIN_LONG" type="number">
+  Minimum RSI value required to qualify a long entry signal. Signals are blocked when RSI is below this threshold, filtering out oversold-recovery noise.
+
+  **Default:** `42`
+</ParamField>
+
+<ParamField path="RSI_MAX_SHORT" type="number">
+  Maximum RSI value allowed to qualify a short entry signal. Signals are blocked when RSI is above this threshold.
+
+  **Default:** `58`
+</ParamField>
+
+### Watermellon .env.local example
+
+```env
+STRATEGY_TYPE=watermellon
+VIRTUAL_TIMEFRAME_MS=30000
+
+EMA_FAST=8
+EMA_MID=21
+EMA_SLOW=48
+RSI_LENGTH=14
+RSI_MIN_LONG=42
+RSI_MAX_SHORT=58
+```
+
+---
+
+## Peach Hybrid strategy
+
+Active when `STRATEGY_TYPE=peach-hybrid`. Peach Hybrid combines two independent sub-systems that run on the same synthetic bars and can each emit entry signals:
+
+- **V1 — Trend/bias system:** uses a macro EMA stack plus a micro EMA crossover and RSI to identify sustained directional moves.
+- **V2 — Momentum surge system:** uses a tighter EMA stack, RSI momentum delta, and volume confirmation to capture short-burst momentum entries.
+
+### V1 — Trend/bias system parameters
+
+<ParamField path="PEACH_V1_EMA_FAST" type="number">
+  Fast EMA period for the macro trend stack.
+
+  **Default:** `8`
+</ParamField>
+
+<ParamField path="PEACH_V1_EMA_MID" type="number">
+  Mid EMA period for the macro trend stack.
+
+  **Default:** `21`
+</ParamField>
+
+<ParamField path="PEACH_V1_EMA_SLOW" type="number">
+  Slow EMA period for the macro trend stack.
+
+  **Default:** `48`
+</ParamField>
+
+<ParamField path="PEACH_V1_EMA_MICRO_FAST" type="number">
+  Fast period for the micro EMA crossover, used to confirm near-term directional bias within the macro trend.
+
+  **Default:** `5`
+</ParamField>
+
+<ParamField path="PEACH_V1_EMA_MICRO_SLOW" type="number">
+  Slow period for the micro EMA crossover.
+
+  **Default:** `13`
+</ParamField>
+
+<ParamField path="PEACH_V1_RSI_LENGTH" type="number">
+  RSI lookback period for V1 signal qualification.
+
+  **Default:** `14`
+</ParamField>
+
+<ParamField path="PEACH_V1_RSI_MIN_LONG" type="number">
+  Minimum RSI required to qualify a V1 long signal.
+
+  **Default:** `42.0`
+</ParamField>
+
+<ParamField path="PEACH_V1_RSI_MAX_SHORT" type="number">
+  Maximum RSI allowed to qualify a V1 short signal.
+
+  **Default:** `58.0`
+</ParamField>
+
+<ParamField path="PEACH_V1_MIN_BARS_BETWEEN" type="number">
+  Minimum number of bars that must elapse between consecutive V1 signals of the same type. Prevents rapid re-entry immediately after an exit.
+
+  **Default:** `1`
+</ParamField>
+
+<ParamField path="PEACH_V1_MIN_MOVE_PCT" type="number">
+  Minimum price move percentage that the current bar must exhibit to qualify as a V1 signal. Filters out signals generated during low-volatility consolidation.
+
+  **Default:** `0.10`
+</ParamField>
+
+### V2 — Momentum surge system parameters
+
+<ParamField path="PEACH_V2_EMA_FAST" type="number">
+  Fast EMA period for V2's tight momentum stack.
+
+  **Default:** `3`
+</ParamField>
+
+<ParamField path="PEACH_V2_EMA_MID" type="number">
+  Mid EMA period for V2's momentum stack.
+
+  **Default:** `8`
+</ParamField>
+
+<ParamField path="PEACH_V2_EMA_SLOW" type="number">
+  Slow EMA period for V2's momentum stack.
+
+  **Default:** `13`
+</ParamField>
+
+<ParamField path="PEACH_V2_RSI_MOMENTUM_THRESHOLD" type="number">
+  RSI delta threshold for momentum surge detection. V2 requires the RSI to have moved by at least this amount within the lookback window to confirm a momentum entry. Calibrated to match the Manual Cherry parameter set.
+
+  **Default:** `4.0`
+
+  <Note>
+    `env.example` ships with `3.0` for this value. The `config.ts` code default is `4.0`, updated to match the Manual Cherry calibration. Use `4.0` unless you have a specific reason to lower the threshold.
+  </Note>
+</ParamField>
+
+<ParamField path="PEACH_V2_VOLUME_LOOKBACK" type="number">
+  Number of bars to look back when computing the volume baseline. V2 compares the current bar's volume against the average over this window.
+
+  **Default:** `4`
+</ParamField>
+
+<ParamField path="PEACH_V2_VOLUME_MULTIPLIER" type="number">
+  The current bar's volume must be at least this multiple of the lookback baseline for V2 to confirm an entry. Filters entries that lack volume conviction.
+
+  **Default:** `2.0`
+
+  <Note>
+    `env.example` ships with `1.5` for this value. The `config.ts` code default is `2.0`, updated to match the Manual Cherry calibration. Use `2.0` for production; `1.5` will generate more frequent (but lower-confidence) entries.
+  </Note>
+</ParamField>
+
+<ParamField path="PEACH_V2_EXIT_VOLUME_MULTIPLIER" type="number">
+  Volume multiple threshold used for the volume-drop exit signal. When current volume falls below `baseline × EXIT_VOLUME_MULTIPLIER`, V2 may trigger a position close.
+
+  **Default:** `1.2`
+</ParamField>
+
+### Peach Hybrid .env.local example
+
+```env
+STRATEGY_TYPE=peach-hybrid
+VIRTUAL_TIMEFRAME_MS=30000
+
+# V1 — Trend/bias
+PEACH_V1_EMA_FAST=8
+PEACH_V1_EMA_MID=21
+PEACH_V1_EMA_SLOW=48
+PEACH_V1_EMA_MICRO_FAST=5
+PEACH_V1_EMA_MICRO_SLOW=13
+PEACH_V1_RSI_LENGTH=14
+PEACH_V1_RSI_MIN_LONG=42.0
+PEACH_V1_RSI_MAX_SHORT=58.0
+PEACH_V1_MIN_BARS_BETWEEN=1
+PEACH_V1_MIN_MOVE_PCT=0.10
+
+# V2 — Momentum surge
+PEACH_V2_EMA_FAST=3
+PEACH_V2_EMA_MID=8
+PEACH_V2_EMA_SLOW=13
+PEACH_V2_RSI_MOMENTUM_THRESHOLD=4.0
+PEACH_V2_VOLUME_LOOKBACK=4
+PEACH_V2_VOLUME_MULTIPLIER=2.0
+PEACH_V2_EXIT_VOLUME_MULTIPLIER=1.2
+```
+
+<CardGroup cols={2}>
+  <Card title="Environment variables" icon="sliders" href="/configuration/environment-variables">
+    Connection credentials, mode, and startup guards
+  </Card>
+  <Card title="Risk management" icon="shield-halved" href="/configuration/risk-management">
+    Position sizing, leverage, stop-loss, and regime filters
+  </Card>
+</CardGroup>

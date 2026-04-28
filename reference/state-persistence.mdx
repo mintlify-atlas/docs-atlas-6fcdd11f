@@ -1,0 +1,108 @@
+---
+title: "State persistence: bot-state.json and restarts"
+description: "How Aster Bot persists position state to data/bot-state.json between restarts, how stale state (older than 1 hour) is discarded, and when to reset manually."
+---
+
+Aster Bot persists its position state to `data/bot-state.json` between restarts. This ensures the bot can resume after a crash or manual restart without losing track of open positions. State is written synchronously after every position change, so the file always reflects the last known state.
+
+## State file location
+
+```
+data/bot-state.json
+```
+
+The file is created automatically on first run. The `data/` directory is also created if it does not exist.
+
+## PersistedState structure
+
+The file stores a `PersistedState` object with the following shape:
+
+```typescript
+type PersistedState = {
+  position: LocalPositionState;
+  lastBarCloseTime: number;
+  timestamp: number;        // Unix ms — written at save time, used for staleness check
+};
+```
+
+The `LocalPositionState` type tracks the full in-memory position:
+
+```typescript
+export type LocalPositionState = {
+  size: number;
+  side: "long" | "short" | "flat";
+  avgEntry: number;
+  unrealizedPnl: number;
+  lastUpdate: number;
+  orderId?: string;
+  pendingOrder?: {
+    side: "long" | "short";
+    size: number;
+    timestamp: number;
+  };
+};
+```
+
+The simpler `PositionState` type from `src/lib/types.ts` is used in higher-level interfaces:
+
+```typescript
+export type PositionState = {
+  side: PositionSide;  // "long" | "short" | "flat"
+  size: number;
+  entryPrice?: number;
+  openedAt?: number;
+};
+```
+
+## Persistence behavior
+
+<ResponseField name="save()" type="void">
+  Called after every position change. Writes the current `LocalPositionState` and `lastBarCloseTime` to `data/bot-state.json` along with a `timestamp` of `Date.now()`. Creates the `data/` directory if it does not exist.
+</ResponseField>
+
+<ResponseField name="load()" type="{ position: LocalPositionState; lastBarCloseTime: number } | null">
+  Called on startup. Reads `data/bot-state.json` and checks the `timestamp` field. If the state is more than **60 minutes old** (`age > 60 * 60 * 1000` ms), it is treated as stale and discarded — `load()` returns `null` and the bot starts flat.
+</ResponseField>
+
+<ResponseField name="clear()" type="void">
+  Overwrites `data/bot-state.json` with an empty object `{}` without deleting the file. Used for programmatic resets.
+</ResponseField>
+
+Key behaviors to understand:
+
+- State is written after every position change.
+- On startup, the persisted state is loaded and validated against the staleness threshold.
+- Stale state (older than 1 hour) is silently discarded — the bot starts flat.
+- If `data/bot-state.json` does not exist, the bot starts flat with no error.
+
+## When to manually reset state
+
+Delete `data/bot-state.json` to force the bot to start flat on next launch. This is appropriate when:
+
+- You manually closed a position on the exchange outside the bot.
+- The bot crashed mid-trade and the persisted state is inconsistent with the exchange.
+- You want to reset after a dry-run session before going live.
+
+```bash
+rm data/bot-state.json
+```
+
+The bot will recreate the file on next startup.
+
+<Warning>
+  If `data/bot-state.json` records an open position but no matching position exists on the exchange, the bot may attempt to close a position that does not exist. This can result in unexpected order errors. Always reconcile the exchange state manually before restarting the bot after a crash or manual intervention.
+</Warning>
+
+## In-memory tracking
+
+`PositionStateManager` maintains the current position in memory during a running session and is the single source of truth while the bot is live. It syncs with `StatePersistence` on every write.
+
+On each polling cycle, `PositionStateManager.updateFromRest()` reconciles the in-memory state against the position returned by the exchange REST API. If reconciliation fails twice in a row (`maxReconciliationFailures = 2`), `shouldFreezeTrading()` returns `true` and the bot halts new entries until the discrepancy is resolved.
+
+```typescript
+// Reconciliation tolerance
+const sizeMatch  = Math.abs(rest.size - local.size) < 0.0001;
+const entryMatch = Math.abs(rest.avgEntry - local.avgEntry) / rest.avgEntry < 0.01; // 1%
+```
+
+If the exchange shows a flat position while local state shows open (or vice versa), `updateFromRest()` accepts the exchange value and resets the failure counter.

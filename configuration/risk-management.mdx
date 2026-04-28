@@ -1,0 +1,121 @@
+---
+title: "Aster Bot risk management configuration"
+description: "Configure position sizing, leverage limits, stop-loss, flip controls, and ADX regime filter for Aster Bot. Controls apply before every order."
+---
+
+Risk controls are applied by Aster Bot before every order, independent of whatever signal the active strategy produces. Even when a strategy emits a valid entry signal, the bot will block or reject the trade if any risk constraint is violated. All variables in this section are optional — the defaults represent a conservative starting point suitable for initial live testing.
+
+## Position sizing
+
+<ParamField path="MAX_POSITION_USDT" type="number">
+  Maximum notional value per position, denominated in USDT. The bot will not open a position whose size exceeds this value.
+
+  **Default:** `10000`
+</ParamField>
+
+<ParamField path="MAX_LEVERAGE" type="number">
+  Leverage multiplier applied when sizing orders. Must be one of the values supported by AsterDEX.
+
+  **Default:** `5`
+
+  <Warning>
+    `MAX_LEVERAGE` must be exactly **5, 10, 15, or 50**. These are the only leverage tiers supported by AsterDEX. Any other value will be rejected by the exchange at order time.
+  </Warning>
+</ParamField>
+
+<ParamField path="MAX_POSITIONS" type="number">
+  Maximum number of positions that may be open simultaneously across all tracked pairs.
+
+  **Default:** `1`
+</ParamField>
+
+## Flip and churn control
+
+<ParamField path="MAX_FLIPS_PER_HOUR" type="integer">
+  Maximum number of side-changes (long → short or short → long) allowed within a rolling one-hour window. Must be a non-negative integer. Set to `0` to disable all flips. This guard reduces overtrading and commission drag in choppy markets.
+
+  **Default:** `12`
+</ParamField>
+
+## Stop-loss and take-profit
+
+<ParamField path="USE_STOP_LOSS" type="boolean">
+  Master switch for the fixed stop-loss system. Must be `true` for `STOP_LOSS_PCT` to take effect.
+
+  **Default:** `false`
+</ParamField>
+
+<ParamField path="STOP_LOSS_PCT" type="number">
+  Fixed stop-loss percentage. When `USE_STOP_LOSS=true` and the position moves against entry by this percentage, the bot closes the position. A value of `0` disables the fixed stop.
+
+  **Default:** `0` (disabled)
+</ParamField>
+
+<ParamField path="TAKE_PROFIT_PCT" type="number">
+  Fixed take-profit percentage. When the position moves in favour of entry by this percentage, the bot closes the position to lock in gains. A value of `0` disables the fixed take-profit.
+
+  **Default:** `0` (disabled)
+</ParamField>
+
+<ParamField path="EMERGENCY_STOP_LOSS_PCT" type="number">
+  Hard-floor loss percentage that triggers an immediate position close regardless of other settings. This operates independently of `USE_STOP_LOSS` and cannot be disabled by setting `USE_STOP_LOSS=false`. Intended as a last-resort circuit breaker.
+
+  **Default:** `2.0`
+</ParamField>
+
+## Regime filter
+
+<ParamField path="REQUIRE_TRENDING_MARKET" type="boolean">
+  When `true`, the bot blocks new entries if the ADX value on the current bar is below `ADX_THRESHOLD`. This prevents opening positions during low-momentum, range-bound conditions.
+
+  **Default:** `false` (per `config.ts` code default; `env.example` ships with `true`)
+
+  <Note>
+    The `env.example` file sets `REQUIRE_TRENDING_MARKET=true` as a recommended starting point. The code default is `false` so the bot works without this variable set, but enabling it is advised for live deployments.
+  </Note>
+</ParamField>
+
+<ParamField path="ADX_THRESHOLD" type="number">
+  The ADX level required for a market to be classified as trending when `REQUIRE_TRENDING_MARKET=true`. Must be a number between 0 and 100. ADX readings above this value are considered trending; readings at or below it block new entries.
+
+  **Default:** `25`
+</ParamField>
+
+## Quick reference
+
+| Variable | Default | Valid range / values |
+|---|---|---|
+| `MAX_POSITION_USDT` | `10000` | Any positive number |
+| `MAX_LEVERAGE` | `5` | `5`, `10`, `15`, `50` |
+| `MAX_POSITIONS` | `1` | Any positive integer |
+| `MAX_FLIPS_PER_HOUR` | `12` | Integer ≥ 0 |
+| `USE_STOP_LOSS` | `false` | `true` / `false` |
+| `STOP_LOSS_PCT` | `0` | Any number ≥ 0 |
+| `TAKE_PROFIT_PCT` | `0` | Any number ≥ 0 |
+| `EMERGENCY_STOP_LOSS_PCT` | `2.0` | Any positive number |
+| `REQUIRE_TRENDING_MARKET` | `false` | `true` / `false` |
+| `ADX_THRESHOLD` | `25` | `0` – `100` |
+
+<Tip>
+  **Recommended starting configuration for new deployments:**
+
+  ```env
+  MAX_POSITION_USDT=500
+  MAX_LEVERAGE=5
+  MAX_FLIPS_PER_HOUR=6
+  REQUIRE_TRENDING_MARKET=true
+  ADX_THRESHOLD=25
+  EMERGENCY_STOP_LOSS_PCT=2.0
+  ```
+
+  Start with a small `MAX_POSITION_USDT`, the lowest supported leverage (`5`), a conservative flip cap, and the ADX regime filter enabled. Increase position size and flip allowance only after validating strategy behaviour in `dry-run` mode.
+</Tip>
+
+<CardGroup cols={2}>
+  <Card title="Environment variables" icon="sliders" href="/configuration/environment-variables">
+    Connection credentials, mode, and strategy selection
+  </Card>
+  <Card title="Strategy parameters" icon="chart-line" href="/configuration/strategies">
+    Tune Watermellon and Peach Hybrid indicator settings
+  </Card>
+</CardGroup>
